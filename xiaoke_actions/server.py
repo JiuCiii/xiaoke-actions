@@ -35,19 +35,35 @@ mcp = FastMCP(
 
 
 @mcp.tool()
-def send_note(message: str, title: str | None = None, urgency: str | None = "normal") -> dict:
+def send_note(
+    message: str,
+    title: str | None = None,
+    urgency: str | None = "normal",
+    category: str | None = "presence",
+    intent: str | None = None,
+) -> dict:
     """Send a short note to Xiaomao's phone through ntfy.
 
     Args:
         message: The note body. Keep it concise.
-        title: Optional notification title. Defaults to Xiaoke.
+        title: Optional notification title. Defaults to Claude.
         urgency: One of low, normal, high, urgent. Defaults to normal.
+        category: One of presence, monitor, task, memory, system. Defaults to presence.
+        intent: Optional short freeform purpose tag, such as affection or wake_error.
     """
-    decision = guardrails.check(message=message, title=title, urgency=urgency)
+    decision = guardrails.check(
+        message=message,
+        title=title,
+        urgency=urgency,
+        category=category,
+        intent=intent,
+    )
     audit = {
         "tool": "send_note",
         "allowed": decision.allowed,
         "reason": decision.reason,
+        "category": decision.category,
+        "intent": decision.intent,
         "urgency": decision.urgency,
         "title": decision.title,
         "message_chars": len(decision.message),
@@ -59,6 +75,9 @@ def send_note(message: str, title: str | None = None, urgency: str | None = "nor
             "ok": False,
             "delivered": False,
             "reason": decision.reason,
+            "category": decision.category,
+            "intent": decision.intent,
+            "urgency": decision.urgency,
         }
 
     try:
@@ -75,6 +94,9 @@ def send_note(message: str, title: str | None = None, urgency: str | None = "nor
             "delivered": False,
             "reason": "ntfy_error",
             "error": str(exc),
+            "category": decision.category,
+            "intent": decision.intent,
+            "urgency": decision.urgency,
         }
 
     audit["ntfy_status"] = response["status"]
@@ -84,6 +106,9 @@ def send_note(message: str, title: str | None = None, urgency: str | None = "nor
         "delivered": True,
         "reason": "sent",
         "ntfy_status": response["status"],
+        "category": decision.category,
+        "intent": decision.intent,
+        "urgency": decision.urgency,
     }
 
 

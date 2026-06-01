@@ -10,6 +10,7 @@ from .config import Config
 
 
 ALLOWED_URGENCY = {"low", "normal", "high", "urgent"}
+ALLOWED_CATEGORY = {"presence", "monitor", "task", "memory", "system"}
 NTFY_PRIORITY = {
     "low": "2",
     "normal": "3",
@@ -26,6 +27,8 @@ class GuardrailDecision:
     priority: str
     title: str
     message: str
+    category: str
+    intent: str | None
 
 
 class ActionGuardrails:
@@ -35,26 +38,44 @@ class ActionGuardrails:
         self._last_sent_at: datetime | None = None
         self._recent_fingerprints: dict[str, datetime] = {}
 
-    def check(self, message: str, title: str | None, urgency: str | None) -> GuardrailDecision:
+    def check(
+        self,
+        message: str,
+        title: str | None,
+        urgency: str | None,
+        category: str | None,
+        intent: str | None,
+    ) -> GuardrailDecision:
         cleaned_message = " ".join((message or "").split())
         cleaned_title = " ".join((title or "").split()) or self.config.default_title
         cleaned_urgency = (urgency or "normal").strip().lower()
         if cleaned_urgency not in ALLOWED_URGENCY:
             cleaned_urgency = "normal"
+        cleaned_category = (category or "presence").strip().lower()
+        if cleaned_category not in ALLOWED_CATEGORY:
+            cleaned_category = "presence"
+        cleaned_intent = self._clean_intent(intent)
 
         if not self.config.ntfy_url:
-            return self._deny("ntfy_not_configured", cleaned_urgency, cleaned_title, cleaned_message)
+            return self._deny(
+                "ntfy_not_configured",
+                cleaned_urgency,
+                cleaned_title,
+                cleaned_message,
+                cleaned_category,
+                cleaned_intent,
+            )
         if not cleaned_message:
-            return self._deny("empty_message", cleaned_urgency, cleaned_title, cleaned_message)
+            return self._deny("empty_message", cleaned_urgency, cleaned_title, cleaned_message, cleaned_category, cleaned_intent)
         if len(cleaned_message) > self.config.max_message_chars:
-            return self._deny("message_too_long", cleaned_urgency, cleaned_title, cleaned_message)
+            return self._deny("message_too_long", cleaned_urgency, cleaned_title, cleaned_message, cleaned_category, cleaned_intent)
 
         now = self._now()
         self._evict_old(now)
 
         if self._is_quiet_now(now):
             if self.config.quiet_mode == "suppress":
-                return self._deny("quiet_hours", cleaned_urgency, cleaned_title, cleaned_message)
+                return self._deny("quiet_hours", cleaned_urgency, cleaned_title, cleaned_message, cleaned_category, cleaned_intent)
             if self.config.quiet_mode == "downgrade":
                 cleaned_urgency = "low"
 
@@ -62,14 +83,14 @@ class ActionGuardrails:
             self._last_sent_at is not None
             and (now - self._last_sent_at).total_seconds() < self.config.min_interval_seconds
         ):
-            return self._deny("min_interval", cleaned_urgency, cleaned_title, cleaned_message)
+            return self._deny("min_interval", cleaned_urgency, cleaned_title, cleaned_message, cleaned_category, cleaned_intent)
 
         if len(self._sent_at) >= self.config.rate_limit_per_hour:
-            return self._deny("hourly_rate_limit", cleaned_urgency, cleaned_title, cleaned_message)
+            return self._deny("hourly_rate_limit", cleaned_urgency, cleaned_title, cleaned_message, cleaned_category, cleaned_intent)
 
         fingerprint = self._fingerprint(cleaned_title, cleaned_message)
         if fingerprint in self._recent_fingerprints:
-            return self._deny("duplicate_message", cleaned_urgency, cleaned_title, cleaned_message)
+            return self._deny("duplicate_message", cleaned_urgency, cleaned_title, cleaned_message, cleaned_category, cleaned_intent)
 
         self._sent_at.append(now)
         self._last_sent_at = now
@@ -82,9 +103,19 @@ class ActionGuardrails:
             priority=NTFY_PRIORITY[cleaned_urgency],
             title=cleaned_title,
             message=cleaned_message,
+            category=cleaned_category,
+            intent=cleaned_intent,
         )
 
-    def _deny(self, reason: str, urgency: str, title: str, message: str) -> GuardrailDecision:
+    def _deny(
+        self,
+        reason: str,
+        urgency: str,
+        title: str,
+        message: str,
+        category: str,
+        intent: str | None,
+    ) -> GuardrailDecision:
         return GuardrailDecision(
             allowed=False,
             reason=reason,
@@ -92,6 +123,8 @@ class ActionGuardrails:
             priority=NTFY_PRIORITY.get(urgency, NTFY_PRIORITY["normal"]),
             title=title,
             message=message,
+            category=category,
+            intent=intent,
         )
 
     def _now(self) -> datetime:
@@ -139,6 +172,13 @@ class ActionGuardrails:
             return time(hour=int(hour), minute=int(minute))
         except (ValueError, TypeError):
             return None
+
+    @staticmethod
+    def _clean_intent(value: str | None) -> str | None:
+        cleaned = " ".join((value or "").split())
+        if not cleaned:
+            return None
+        return cleaned[:48]
 
     @staticmethod
     def _fingerprint(title: str, message: str) -> str:
