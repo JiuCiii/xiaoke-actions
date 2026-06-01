@@ -23,7 +23,7 @@ def send_ntfy(config: Config, message: str, title: str, priority: str) -> dict[s
     headers = {
         # urllib/http.client encodes header values as latin-1. Keep non-ASCII
         # content in the UTF-8 body and make headers transport-safe.
-        "Title": _safe_header_value(title, "Xiaoke"),
+        "Title": _safe_header_value(title, "Claude"),
         "Priority": priority,
         "Content-Type": "text/plain; charset=utf-8",
     }
