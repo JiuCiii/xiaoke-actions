@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: xiaoke-actions
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m xiaoke_actions.server
+    envVars:
+      - key: NTFY_TOPIC
+        sync: false
+      - key: DEFAULT_TITLE
+        value: 小克
+      - key: MAX_MESSAGE_CHARS
+        value: "500"
+      - key: RATE_LIMIT_PER_HOUR
+        value: "6"
+      - key: MIN_INTERVAL_SECONDS
+        value: "30"
+      - key: DEDUPE_WINDOW_SECONDS
+        value: "300"
+      - key: QUIET_HOURS
+        value: ""
+      - key: QUIET_MODE
+        value: suppress
+      - key: TIMEZONE
+        value: Asia/Shanghai
