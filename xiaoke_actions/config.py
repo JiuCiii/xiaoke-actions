@@ -40,7 +40,7 @@ def load_config() -> Config:
     return Config(
         ntfy_url=ntfy_url,
         ntfy_token=os.getenv("NTFY_TOKEN") or None,
-        default_title=os.getenv("DEFAULT_TITLE", "小克"),
+        default_title=os.getenv("DEFAULT_TITLE", "Xiaoke"),
         max_message_chars=_int_env("MAX_MESSAGE_CHARS", 500),
         rate_limit_per_hour=_int_env("RATE_LIMIT_PER_HOUR", 6),
         min_interval_seconds=_int_env("MIN_INTERVAL_SECONDS", 30),

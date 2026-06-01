@@ -17,7 +17,7 @@ Required:
 Optional:
 
 - `NTFY_TOKEN`
-- `DEFAULT_TITLE` default: `小克`
+- `DEFAULT_TITLE` default: `Xiaoke`
 - `MAX_MESSAGE_CHARS` default: `500`
 - `RATE_LIMIT_PER_HOUR` default: `6`
 - `MIN_INTERVAL_SECONDS` default: `30`

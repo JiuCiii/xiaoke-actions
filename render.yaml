@@ -9,7 +9,7 @@ services:
       - key: NTFY_TOPIC
         sync: false
       - key: DEFAULT_TITLE
-        value: 小克
+        value: Xiaoke
       - key: MAX_MESSAGE_CHARS
         value: "500"
       - key: RATE_LIMIT_PER_HOUR
