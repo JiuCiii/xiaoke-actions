@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -127,19 +128,32 @@ class SupabaseActionQueue:
             headers["Prefer"] = "return=representation"
 
         data = None if body is None else json.dumps(body).encode("utf-8")
-        request = Request(url, data=data, headers=headers, method=method)
-        try:
-            with urlopen(request, timeout=20) as response:
-                raw = response.read().decode("utf-8")
-        except HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            raise ActionQueueError(f"supabase_http_{exc.code}: {detail}") from exc
-        except URLError as exc:
-            raise ActionQueueError(f"supabase_url_error: {exc}") from exc
+        raw = self._urlopen_with_retries(url, data, headers, method)
 
         if not raw:
             return None
         return json.loads(raw)
+
+    def _urlopen_with_retries(
+        self,
+        url: str,
+        data: bytes | None,
+        headers: dict[str, str],
+        method: str,
+    ) -> str:
+        last_error: Exception | None = None
+        for attempt in range(4):
+            request = Request(url, data=data, headers=headers, method=method)
+            try:
+                with urlopen(request, timeout=20) as response:
+                    return response.read().decode("utf-8")
+            except HTTPError as exc:
+                detail = exc.read().decode("utf-8", errors="replace")
+                raise ActionQueueError(f"supabase_http_{exc.code}: {detail}") from exc
+            except URLError as exc:
+                last_error = exc
+                time.sleep(0.5 * (attempt + 1))
+        raise ActionQueueError(f"supabase_url_error: {last_error}") from last_error
 
     @staticmethod
     def _record(row: dict[str, Any]) -> QueueRecord:
