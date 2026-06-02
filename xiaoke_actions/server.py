@@ -194,6 +194,38 @@ def toy_diagnostics(limit: int = 5) -> dict:
 
 
 @mcp.tool()
+def toy_safety_status() -> dict:
+    """Return a concise read-only answer about whether queued toy actions can run now."""
+    diagnostics = toy_diagnostics(limit=1)
+    bridge = diagnostics.get("bridge") or {}
+    queue_counts = diagnostics.get("queue_counts") or {}
+    bridge_ready = bool(
+        bridge.get("status") == "online"
+        and bridge.get("fresh")
+        and bridge.get("local_armed")
+    )
+    queue_idle = queue_counts.get("pending", 0) == 0 and queue_counts.get("running", 0) == 0
+    queue_configured = bool((diagnostics.get("status") or {}).get("queue", {}).get("configured"))
+    can_execute_non_stop = bool(queue_configured and bridge_ready and queue_idle)
+    return {
+        "ok": can_execute_non_stop,
+        "can_execute_non_stop": can_execute_non_stop,
+        "can_queue_stop": queue_configured,
+        "bridge_ready": bridge_ready,
+        "queue_idle": queue_idle,
+        "queue_counts": queue_counts,
+        "bridge": bridge,
+        "warnings": diagnostics.get("warnings") or [],
+        "warning_details": diagnostics.get("warning_details") or {},
+        "next_step": _toy_safety_next_step(
+            queue_configured=queue_configured,
+            bridge=bridge,
+            queue_idle=queue_idle,
+        ),
+    }
+
+
+@mcp.tool()
 def toy_command(
     action: str,
     seconds: float | None = None,
@@ -362,6 +394,20 @@ def _age_seconds(value: str | None) -> float | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return max(0.0, (datetime.now(timezone.utc) - parsed).total_seconds())
+
+
+def _toy_safety_next_step(*, queue_configured: bool, bridge: dict, queue_idle: bool) -> str:
+    if not queue_configured:
+        return "configure_supabase_queue"
+    if not bridge:
+        return "run_arm_and_start_toy_bridge_bat"
+    if bridge.get("status") != "online" or not bridge.get("fresh"):
+        return "run_arm_and_start_toy_bridge_bat"
+    if not bridge.get("local_armed"):
+        return "run_arm_and_start_toy_bridge_bat"
+    if not queue_idle:
+        return "wait_for_queue_or_call_toy_stop_if_needed"
+    return "ready_for_one_approved_toy_action"
 
 
 def _clean_seconds(seconds: float) -> float:

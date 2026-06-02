@@ -151,21 +151,26 @@ Claude connection:
 - This repository only hosts the MCP server. Claude will not see these tools
   until its MCP client configuration points to the Render `/mcp` URL.
 - After Claude is connected, it can call `toy_status` and `toy_diagnostics` to
-  inspect the queue and configuration, then call `toy_main`, `toy_vibe`,
-  `toy_stop`, or `toy_sequence` when appropriate.
+  inspect the queue and configuration. It can call `toy_safety_status` for a
+  concise yes/no answer about whether non-stop toy commands can execute now,
+  then call `toy_main`, `toy_vibe`, `toy_stop`, or `toy_sequence` when
+  appropriate.
 - The local bridge still controls whether commands physically execute. If the
   bridge is closed or `TOY_ARMED` is not true, queued start commands will not
   move the toy.
 
 Local usage:
 
-1. Run `start_toy_bridge.bat` from this folder and keep the visible window open.
-2. Run `stop_toy_bridge.bat` or close the bridge window to stop it.
-3. If Windows shows a stale pid or the bridge is not running, run
-   `stop_toy_bridge.bat`; it clears the pid file safely.
-4. Set `TOY_ARMED=true` in the local `.env` only when you intentionally want
+1. Run `arm_and_start_toy_bridge.bat` from this folder to set
+   `TOY_ARMED=true` and start one visible bridge window.
+2. Run `disarm_and_stop_toy_bridge.bat` to set `TOY_ARMED=false` and stop the
+   bridge.
+3. `start_toy_bridge.bat` and `stop_toy_bridge.bat` are lower-level helpers.
+4. If Windows shows a stale pid or the bridge is not running, run
+   `disarm_and_stop_toy_bridge.bat`; it clears the pid file safely.
+5. Set `TOY_ARMED=true` in the local `.env` only when you intentionally want
    the bridge to execute non-stop toy commands.
-5. Override `TOY_MAIN_ADDRESS` or `TOY_VIBRATOR_ADDRESS` in `.env` if the
+6. Override `TOY_MAIN_ADDRESS` or `TOY_VIBRATOR_ADDRESS` in `.env` if the
    paired devices are replaced or their BLE addresses change.
 
 Safety notes:
@@ -182,6 +187,8 @@ Claude toy flow:
 1. Call `toy_diagnostics(limit=1)` first. Continue only when
    `bridge.status=online`, `bridge.fresh=true`, `bridge.local_armed=true`, and
    queue counts show `pending=0` and `running=0`.
+   `toy_safety_status` can be used instead when Claude needs a shorter
+   ready/not-ready answer.
 2. Queue exactly one intended toy action. Prefer short, low-intensity tests
    first, such as `toy_vibe(level=1, seconds=2)` or
    `toy_main(mode=1, seconds=2)`.
@@ -204,16 +211,17 @@ Copyable Claude prompt:
 Use the xiaoke-actions connector for this toy flow.
 
 1. Call toy_diagnostics with limit=1. Do not move the toy yet.
-2. Continue only if bridge.status is online, bridge.fresh is true,
+2. Optionally call toy_safety_status for a concise readiness check.
+3. Continue only if bridge.status is online, bridge.fresh is true,
    bridge.local_armed is true, and queue_counts pending/running are both 0.
-3. Queue exactly this action: <describe the one action or sequence here>.
-4. Wait 25-30 seconds before checking again.
-5. Call toy_diagnostics with limit=2.
-6. Report in Chinese: whether the new record is done, whether every started
+4. Queue exactly this action: <describe the one action or sequence here>.
+5. Wait 25-30 seconds before checking again.
+6. Call toy_diagnostics with limit=2.
+7. Report in Chinese: whether the new record is done, whether every started
    and stopped result is ok=true, whether pending/running returned to 0, and
    whether any warning matters. Treat remote_mcp_disarmed as informational;
    the execution gate is bridge.local_armed.
-7. If the only failure is a transient BLE discovery error such as
+8. If the only failure is a transient BLE discovery error such as
    "Device ... was not found", do not escalate intensity. Say that one
    low-intensity retry is reasonable after a fresh healthy diagnostics check.
 ```
