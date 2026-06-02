@@ -130,6 +130,36 @@ python -m xiaoke_actions.server
 
 Set `NTFY_TOPIC` or `NTFY_URL` in Render environment variables.
 
+## SVAKOM Toy Bridge
+
+Toy commands are queued by the Render MCP server into the Supabase
+`action_queue` table. The Bluetooth side runs only on the local Windows
+machine, so the local bridge must be open before Xiaoke can execute queued toy
+commands.
+
+Current chain:
+
+- Render MCP tools enqueue `toy_main`, `toy_vibe`, `toy_stop`, or
+  `toy_sequence`.
+- Supabase stores those records with `domain = toy`.
+- `start_toy_bridge.bat` starts the local bridge and polls the queue.
+- The bridge claims one pending command, sends the BLE command through
+  `bleak`, and marks the record `done` or `error`.
+
+Local usage:
+
+1. Run `start_toy_bridge.bat` from this folder and keep the visible window open.
+2. Run `stop_toy_bridge.bat` or close the bridge window to stop it.
+3. If Windows shows a stale pid or the bridge is not running, run
+   `stop_toy_bridge.bat`; it clears the pid file safely.
+
+Safety notes:
+
+- Commands are duration-limited to 30 seconds.
+- `toy_stop` has higher queue priority and can interrupt a running sequence.
+- If the bridge is not open, commands remain queued until the bridge starts.
+- The queue was last checked with no `pending` or `running` toy records.
+
 ## Design Boundaries
 
 - `xiaoke-actions` is only an action outlet. It does not decide whether Claude should send a note.

@@ -6,7 +6,7 @@ if not exist ".logs\toy_bridge.pid" (
   exit /b 0
 )
 set /p PID=<".logs\toy_bridge.pid"
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Stop-Process -Id %PID% -Force -ErrorAction SilentlyContinue"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$p = Get-Process -Id %PID% -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id %PID% -Force; Write-Output 'toy bridge process stopped' } else { Write-Output 'toy bridge process was not running' }"
 del ".logs\toy_bridge.pid" 2>nul
-echo toy bridge stopped
+echo toy bridge pid file cleared
 pause
