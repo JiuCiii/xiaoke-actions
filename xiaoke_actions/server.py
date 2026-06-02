@@ -144,6 +144,7 @@ def toy_diagnostics(limit: int = 5) -> dict:
         "queue_counts": {},
         "recent": [],
         "warnings": [],
+        "warning_details": {},
     }
     if not action_queue.is_configured():
         diagnostics["ok"] = False
@@ -175,6 +176,11 @@ def toy_diagnostics(limit: int = 5) -> dict:
         diagnostics["warnings"].append("toy_commands_running")
     if not config.toy_armed:
         diagnostics["warnings"].append("remote_mcp_disarmed")
+        diagnostics["warning_details"]["remote_mcp_disarmed"] = (
+            "The hosted MCP server is intentionally not armed for direct local execution. "
+            "Toy commands are queued remotely and executed only by the local bridge; "
+            "use bridge.local_armed to determine whether queued non-stop commands can run."
+        )
     diagnostics["ok"] = not any(
         warning in {
             "toy_bridge_status_missing",
@@ -341,7 +347,7 @@ def _bridge_status_summary(row: dict | None) -> dict | None:
         "pid": payload.get("pid"),
         "updated_at": updated_at,
         "age_seconds": age_seconds,
-        "fresh": row.get("status") == "online" and age_seconds is not None and age_seconds <= 30,
+        "fresh": row.get("status") == "online" and age_seconds is not None and age_seconds <= 60,
         "devices": payload.get("devices") or {},
     }
 

@@ -12,6 +12,8 @@ MAIN_ADDRESS = "33:74:7E:ED:80:D9"
 VIBRATOR_ADDRESS = "3D:B2:B4:ED:41:68"
 MAX_SECONDS = 30
 BLE_OPERATION_SECONDS = 8
+BLE_RETRY_ATTEMPTS = 3
+BLE_RETRY_DELAY_SECONDS = 1.0
 
 
 class ToyError(RuntimeError):
@@ -203,7 +205,7 @@ class ToyController:
                 await asyncio.sleep(seconds)
                 await self._stop_connected(client)
 
-        await asyncio.wait_for(operation(), timeout=seconds + BLE_OPERATION_SECONDS + 3)
+        await _retry_ble(operation, timeout=seconds + BLE_OPERATION_SECONDS + 3)
 
     async def _stop(self, address: str) -> None:
         async def operation() -> None:
@@ -211,7 +213,7 @@ class ToyController:
             async with BleakClient(address, timeout=BLE_OPERATION_SECONDS) as client:
                 await self._stop_connected(client)
 
-        await asyncio.wait_for(operation(), timeout=BLE_OPERATION_SECONDS + 3)
+        await _retry_ble(operation, timeout=BLE_OPERATION_SECONDS + 3)
 
     async def _write_once(self, address: str, command: bytes) -> None:
         async def operation() -> None:
@@ -221,7 +223,7 @@ class ToyController:
                 await asyncio.sleep(0.25)
                 await client.write_gatt_char(FFE1, command, response=False)
 
-        await asyncio.wait_for(operation(), timeout=BLE_OPERATION_SECONDS + 3)
+        await _retry_ble(operation, timeout=BLE_OPERATION_SECONDS + 3)
 
     async def _stop_connected(self, client: Any) -> None:
         for command in _stop_commands():
@@ -234,3 +236,18 @@ def _bleak_client() -> Any:
     except ImportError as exc:
         raise ToyError("bleak_not_installed") from exc
     return BleakClient
+
+
+async def _retry_ble(operation: Any, *, timeout: float) -> None:
+    last_error: Exception | None = None
+    for attempt in range(BLE_RETRY_ATTEMPTS):
+        try:
+            await asyncio.wait_for(operation(), timeout=timeout)
+            return
+        except Exception as exc:
+            last_error = exc
+            if attempt == BLE_RETRY_ATTEMPTS - 1:
+                break
+            await asyncio.sleep(BLE_RETRY_DELAY_SECONDS)
+    assert last_error is not None
+    raise last_error
