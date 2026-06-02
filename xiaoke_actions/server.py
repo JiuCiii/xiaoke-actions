@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 
 from mcp.server.fastmcp import FastMCP
 
@@ -139,6 +140,7 @@ def toy_diagnostics(limit: int = 5) -> dict:
     diagnostics = {
         "ok": True,
         "status": status,
+        "bridge": None,
         "queue_counts": {},
         "recent": [],
         "warnings": [],
@@ -149,6 +151,7 @@ def toy_diagnostics(limit: int = 5) -> dict:
         return diagnostics
 
     try:
+        bridge = action_queue.bridge_status()
         counts = action_queue.status_counts(domain="toy")
         recent = action_queue.recent(domain="toy", limit=limit)
     except ActionQueueError as exc:
@@ -156,15 +159,31 @@ def toy_diagnostics(limit: int = 5) -> dict:
         diagnostics["warnings"].append(str(exc))
         return diagnostics
 
+    diagnostics["bridge"] = _bridge_status_summary(bridge)
     diagnostics["queue_counts"] = counts
     diagnostics["recent"] = [_toy_record_summary(row) for row in recent]
+    bridge_fresh = diagnostics["bridge"] and diagnostics["bridge"].get("fresh")
+    if not bridge:
+        diagnostics["warnings"].append("toy_bridge_status_missing")
+    elif not bridge_fresh:
+        diagnostics["warnings"].append("toy_bridge_stale_or_offline")
+    elif not (bridge.get("payload") or {}).get("local_armed"):
+        diagnostics["warnings"].append("toy_bridge_disarmed")
     if counts.get("pending", 0) > 0:
         diagnostics["warnings"].append("toy_commands_pending")
     if counts.get("running", 0) > 0:
         diagnostics["warnings"].append("toy_commands_running")
     if not config.toy_armed:
-        diagnostics["warnings"].append("toy_disarmed")
-    diagnostics["ok"] = not any(warning in {"toy_commands_pending", "toy_commands_running"} for warning in diagnostics["warnings"])
+        diagnostics["warnings"].append("remote_mcp_disarmed")
+    diagnostics["ok"] = not any(
+        warning in {
+            "toy_bridge_status_missing",
+            "toy_bridge_stale_or_offline",
+            "toy_commands_pending",
+            "toy_commands_running",
+        }
+        for warning in diagnostics["warnings"]
+    )
     return diagnostics
 
 
@@ -308,6 +327,35 @@ def _toy_record_summary(row: dict) -> dict:
         "error": row.get("error"),
         "result": row.get("result"),
     }
+
+
+def _bridge_status_summary(row: dict | None) -> dict | None:
+    if not row:
+        return None
+    payload = row.get("payload") or {}
+    updated_at = payload.get("updated_at") or row.get("finished_at")
+    age_seconds = _age_seconds(updated_at)
+    return {
+        "status": row.get("status"),
+        "local_armed": payload.get("local_armed"),
+        "pid": payload.get("pid"),
+        "updated_at": updated_at,
+        "age_seconds": age_seconds,
+        "fresh": row.get("status") == "online" and age_seconds is not None and age_seconds <= 30,
+        "devices": payload.get("devices") or {},
+    }
+
+
+def _age_seconds(value: str | None) -> float | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return max(0.0, (datetime.now(timezone.utc) - parsed).total_seconds())
 
 
 def _clean_seconds(seconds: float) -> float:

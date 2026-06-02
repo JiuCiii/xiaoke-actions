@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Any
 
 from .action_queue import QueueRecord, SupabaseActionQueue
@@ -25,15 +26,18 @@ class ToyBridge:
         )
         self.poll_seconds = poll_seconds
         self.pid_file = pid_file
+        self._last_heartbeat = 0.0
 
     async def run_forever(self) -> None:
         if not self.queue.is_configured():
             raise ToyError("supabase_not_configured")
         self._write_pid()
+        self._write_bridge_status("online")
         logger.info("toy bridge started")
         try:
             while True:
                 try:
+                    self._heartbeat_if_due()
                     record = self.queue.claim_next(domain="toy")
                     if record is not None:
                         await self._handle_record(record)
@@ -41,6 +45,7 @@ class ToyBridge:
                     logger.exception("toy bridge loop error")
                 await asyncio.sleep(self.poll_seconds)
         finally:
+            self._write_bridge_status("offline")
             self._remove_pid()
 
     async def _handle_record(self, record: QueueRecord) -> None:
@@ -144,6 +149,26 @@ class ToyBridge:
             os.remove(self.pid_file)
         except FileNotFoundError:
             pass
+
+    def _heartbeat_if_due(self) -> None:
+        now = asyncio.get_running_loop().time()
+        if now - self._last_heartbeat < 10:
+            return
+        self._write_bridge_status("online")
+
+    def _write_bridge_status(self, status: str) -> None:
+        data = {
+            "status": status,
+            "local_armed": self.config.toy_armed,
+            "pid": os.getpid(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "devices": self.controller.status()["devices"],
+        }
+        try:
+            self.queue.update_bridge_status(status, data)
+            self._last_heartbeat = asyncio.get_running_loop().time()
+        except RuntimeError:
+            logger.exception("bridge status update failed")
 
 
 def main() -> None:

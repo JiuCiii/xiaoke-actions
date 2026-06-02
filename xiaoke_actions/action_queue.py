@@ -18,6 +18,9 @@ class ActionQueueError(RuntimeError):
     pass
 
 
+TOY_BRIDGE_STATUS_ID = "00000000-0000-4000-8000-000000000001"
+
+
 @dataclass(frozen=True)
 class QueueRecord:
     id: str
@@ -113,6 +116,7 @@ class SupabaseActionQueue:
         *,
         body: Any | None = None,
         query: dict[str, str] | None = None,
+        prefer: str | None = None,
     ) -> Any:
         if not self.is_configured():
             raise ActionQueueError("supabase_not_configured")
@@ -126,7 +130,7 @@ class SupabaseActionQueue:
             "Accept": "application/json",
         }
         if method == "POST":
-            headers["Prefer"] = "return=representation"
+            headers["Prefer"] = prefer or "return=representation"
 
         data = None if body is None else json.dumps(body).encode("utf-8")
         raw = self._urlopen_with_retries(url, data, headers, method)
@@ -193,6 +197,43 @@ class SupabaseActionQueue:
             },
         )
         return rows or []
+
+    def update_bridge_status(self, status: str, data: dict[str, Any]) -> dict[str, Any] | None:
+        body = {
+            "id": TOY_BRIDGE_STATUS_ID,
+            "domain": "toy_bridge",
+            "action": "heartbeat",
+            "payload": data,
+            "status": status,
+            "priority": 0,
+            "source": "local-toy-bridge",
+            "finished_at": _now_iso(),
+            "result": data,
+            "error": None,
+        }
+        rows = self._request(
+            "POST",
+            "",
+            body=[body],
+            query={"on_conflict": "id", "select": "*"},
+            prefer="resolution=merge-duplicates,return=representation",
+        )
+        if not rows:
+            return None
+        return rows[0]
+
+    def bridge_status(self) -> dict[str, Any] | None:
+        rows = self._request(
+            "GET",
+            "",
+            query={
+                "id": f"eq.{TOY_BRIDGE_STATUS_ID}",
+                "limit": "1",
+            },
+        )
+        if not rows:
+            return None
+        return rows[0]
 
 
 def _now_iso() -> str:
