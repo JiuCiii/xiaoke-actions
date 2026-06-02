@@ -4,6 +4,20 @@ import os
 from dataclasses import dataclass
 
 
+def _load_dotenv() -> None:
+    env_path = os.path.join(os.getcwd(), ".env")
+    if not os.path.exists(env_path):
+        return
+    with open(env_path, encoding="utf-8") as env_file:
+        for raw_line in env_file:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            name, value = line.split("=", 1)
+            cleaned_name = name.strip().lstrip("\ufeff")
+            os.environ.setdefault(cleaned_name, value.strip().strip('"').strip("'"))
+
+
 def _int_env(name: str, default: int) -> int:
     value = os.getenv(name)
     if value is None or value.strip() == "":
@@ -29,9 +43,13 @@ class Config:
     host: str
     port: int
     mcp_path: str
+    supabase_url: str
+    supabase_key: str
+    action_queue_table: str
 
 
 def load_config() -> Config:
+    _load_dotenv()
     topic = os.getenv("NTFY_TOPIC", "").strip()
     ntfy_url = os.getenv("NTFY_URL", "").strip()
     if not ntfy_url and topic:
@@ -51,4 +69,7 @@ def load_config() -> Config:
         host=os.getenv("HOST", "0.0.0.0"),
         port=_int_env("PORT", 8000),
         mcp_path=os.getenv("MCP_PATH", "/mcp"),
+        supabase_url=os.getenv("SUPABASE_URL", "").strip().rstrip("/"),
+        supabase_key=(os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY") or "").strip(),
+        action_queue_table=os.getenv("ACTION_QUEUE_TABLE", "action_queue").strip(),
     )
