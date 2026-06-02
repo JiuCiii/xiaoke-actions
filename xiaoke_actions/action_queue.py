@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import http.client
 import time
 import uuid
 from dataclasses import dataclass
@@ -150,7 +151,7 @@ class SupabaseActionQueue:
             except HTTPError as exc:
                 detail = exc.read().decode("utf-8", errors="replace")
                 raise ActionQueueError(f"supabase_http_{exc.code}: {detail}") from exc
-            except URLError as exc:
+            except (URLError, TimeoutError, OSError, http.client.RemoteDisconnected) as exc:
                 last_error = exc
                 time.sleep(0.5 * (attempt + 1))
         raise ActionQueueError(f"supabase_url_error: {last_error}") from last_error
