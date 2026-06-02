@@ -11,6 +11,7 @@ FFE1 = "0000ffe1-0000-1000-8000-00805f9b34fb"
 MAIN_ADDRESS = "33:74:7E:ED:80:D9"
 VIBRATOR_ADDRESS = "3D:B2:B4:ED:41:68"
 MAX_SECONDS = 30
+BLE_OPERATION_SECONDS = 8
 
 
 class ToyError(RuntimeError):
@@ -190,25 +191,34 @@ class ToyController:
         }
 
     async def _run_for(self, address: str, command: bytes, seconds: float) -> None:
-        BleakClient = _bleak_client()
-        async with BleakClient(address, timeout=20) as client:
-            await self._stop_connected(client)
-            await asyncio.sleep(0.25)
-            await client.write_gatt_char(FFE1, command, response=False)
-            await asyncio.sleep(seconds)
-            await self._stop_connected(client)
+        async def operation() -> None:
+            BleakClient = _bleak_client()
+            async with BleakClient(address, timeout=BLE_OPERATION_SECONDS) as client:
+                await self._stop_connected(client)
+                await asyncio.sleep(0.25)
+                await client.write_gatt_char(FFE1, command, response=False)
+                await asyncio.sleep(seconds)
+                await self._stop_connected(client)
+
+        await asyncio.wait_for(operation(), timeout=seconds + BLE_OPERATION_SECONDS + 3)
 
     async def _stop(self, address: str) -> None:
-        BleakClient = _bleak_client()
-        async with BleakClient(address, timeout=20) as client:
-            await self._stop_connected(client)
+        async def operation() -> None:
+            BleakClient = _bleak_client()
+            async with BleakClient(address, timeout=BLE_OPERATION_SECONDS) as client:
+                await self._stop_connected(client)
+
+        await asyncio.wait_for(operation(), timeout=BLE_OPERATION_SECONDS + 3)
 
     async def _write_once(self, address: str, command: bytes) -> None:
-        BleakClient = _bleak_client()
-        async with BleakClient(address, timeout=20) as client:
-            await self._stop_connected(client)
-            await asyncio.sleep(0.25)
-            await client.write_gatt_char(FFE1, command, response=False)
+        async def operation() -> None:
+            BleakClient = _bleak_client()
+            async with BleakClient(address, timeout=BLE_OPERATION_SECONDS) as client:
+                await self._stop_connected(client)
+                await asyncio.sleep(0.25)
+                await client.write_gatt_char(FFE1, command, response=False)
+
+        await asyncio.wait_for(operation(), timeout=BLE_OPERATION_SECONDS + 3)
 
     async def _stop_connected(self, client: Any) -> None:
         for command in _stop_commands():

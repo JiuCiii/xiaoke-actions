@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 from typing import Any
 
 from .action_queue import QueueRecord, SupabaseActionQueue
@@ -15,21 +16,28 @@ logger = logging.getLogger("xiaoke-toy-bridge")
 
 
 class ToyBridge:
-    def __init__(self, poll_seconds: float = 1.0):
+    def __init__(self, poll_seconds: float = 1.0, pid_file: str | None = None):
         self.queue = SupabaseActionQueue(load_config())
         self.controller = ToyController()
         self.poll_seconds = poll_seconds
+        self.pid_file = pid_file
 
     async def run_forever(self) -> None:
         if not self.queue.is_configured():
             raise ToyError("supabase_not_configured")
+        self._write_pid()
         logger.info("toy bridge started")
-        while True:
-            record = self.queue.claim_next(domain="toy")
-            if record is None:
+        try:
+            while True:
+                try:
+                    record = self.queue.claim_next(domain="toy")
+                    if record is not None:
+                        await self._handle_record(record)
+                except Exception:
+                    logger.exception("toy bridge loop error")
                 await asyncio.sleep(self.poll_seconds)
-                continue
-            await self._handle_record(record)
+        finally:
+            self._remove_pid()
 
     async def _handle_record(self, record: QueueRecord) -> None:
         logger.info("handling %s", json.dumps(record.__dict__, ensure_ascii=False))
@@ -116,17 +124,33 @@ class ToyBridge:
         results = await self.controller.stop(device=device)
         return {"ok": all(result.ok for result in results), "results": [result.__dict__ for result in results]}
 
+    def _write_pid(self) -> None:
+        if not self.pid_file:
+            return
+        os.makedirs(os.path.dirname(self.pid_file) or ".", exist_ok=True)
+        with open(self.pid_file, "w", encoding="utf-8") as pid_file:
+            pid_file.write(str(os.getpid()))
+
+    def _remove_pid(self) -> None:
+        if not self.pid_file:
+            return
+        try:
+            os.remove(self.pid_file)
+        except FileNotFoundError:
+            pass
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run local SVAKOM toy bridge.")
     parser.add_argument("--poll-seconds", type=float, default=1.0)
+    parser.add_argument("--pid-file", default=".logs/toy_bridge.pid")
     args = parser.parse_args()
 
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    asyncio.run(ToyBridge(poll_seconds=args.poll_seconds).run_forever())
+    asyncio.run(ToyBridge(poll_seconds=args.poll_seconds, pid_file=args.pid_file).run_forever())
 
 
 if __name__ == "__main__":
