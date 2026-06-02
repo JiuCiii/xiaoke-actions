@@ -28,6 +28,13 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
+def _bool_env(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None or value.strip() == "":
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class Config:
     ntfy_url: str
@@ -46,6 +53,7 @@ class Config:
     supabase_url: str
     supabase_key: str
     action_queue_table: str
+    toy_armed: bool
 
 
 def load_config() -> Config:
@@ -72,4 +80,5 @@ def load_config() -> Config:
         supabase_url=os.getenv("SUPABASE_URL", "").strip().rstrip("/"),
         supabase_key=(os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY") or "").strip(),
         action_queue_table=os.getenv("ACTION_QUEUE_TABLE", "action_queue").strip(),
+        toy_armed=_bool_env("TOY_ARMED", False),
     )

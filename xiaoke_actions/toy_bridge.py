@@ -8,7 +8,7 @@ import os
 from typing import Any
 
 from .action_queue import QueueRecord, SupabaseActionQueue
-from .config import load_config
+from .config import Config, load_config
 from .toy import ToyController, ToyError
 
 
@@ -17,7 +17,8 @@ logger = logging.getLogger("xiaoke-toy-bridge")
 
 class ToyBridge:
     def __init__(self, poll_seconds: float = 1.0, pid_file: str | None = None):
-        self.queue = SupabaseActionQueue(load_config())
+        self.config: Config = load_config()
+        self.queue = SupabaseActionQueue(self.config)
         self.controller = ToyController()
         self.poll_seconds = poll_seconds
         self.pid_file = pid_file
@@ -52,6 +53,8 @@ class ToyBridge:
     async def _execute(self, record: QueueRecord) -> dict[str, Any]:
         if record.action == "stop":
             return await self._execute_stop(record.payload)
+        if not self.config.toy_armed:
+            raise ToyError("toy_not_armed")
         if record.action == "main":
             return await self._execute_main(record.payload)
         if record.action == "vibe":

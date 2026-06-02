@@ -125,6 +125,7 @@ def toy_status() -> dict:
         "configured": action_queue.is_configured(),
         "table": config.action_queue_table,
     }
+    status["armed"] = config.toy_armed
     return status
 
 

@@ -152,9 +152,13 @@ Local usage:
 2. Run `stop_toy_bridge.bat` or close the bridge window to stop it.
 3. If Windows shows a stale pid or the bridge is not running, run
    `stop_toy_bridge.bat`; it clears the pid file safely.
+4. Set `TOY_ARMED=true` in the local `.env` only when you intentionally want
+   the bridge to execute non-stop toy commands.
 
 Safety notes:
 
+- The bridge defaults to disarmed. When `TOY_ARMED` is not true, it still allows
+  `toy_stop` but rejects `main`, `vibe`, and `sequence` commands.
 - Commands are duration-limited to 30 seconds.
 - `toy_stop` has higher queue priority and can interrupt a running sequence.
 - If the bridge is not open, commands remain queued until the bridge starts.
