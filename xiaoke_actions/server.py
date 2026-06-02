@@ -20,7 +20,10 @@ logger = logging.getLogger("xiaoke-actions")
 
 config = load_config()
 guardrails = ActionGuardrails(config)
-toy_controller = ToyController()
+toy_controller = ToyController(
+    main_address=config.toy_main_address,
+    vibrator_address=config.toy_vibrator_address,
+)
 action_queue = SupabaseActionQueue(config)
 
 mcp = FastMCP(

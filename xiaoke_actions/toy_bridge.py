@@ -19,7 +19,10 @@ class ToyBridge:
     def __init__(self, poll_seconds: float = 1.0, pid_file: str | None = None):
         self.config: Config = load_config()
         self.queue = SupabaseActionQueue(self.config)
-        self.controller = ToyController()
+        self.controller = ToyController(
+            main_address=self.config.toy_main_address,
+            vibrator_address=self.config.toy_vibrator_address,
+        )
         self.poll_seconds = poll_seconds
         self.pid_file = pid_file
 

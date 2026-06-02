@@ -54,6 +54,8 @@ class Config:
     supabase_key: str
     action_queue_table: str
     toy_armed: bool
+    toy_main_address: str
+    toy_vibrator_address: str
 
 
 def load_config() -> Config:
@@ -81,4 +83,6 @@ def load_config() -> Config:
         supabase_key=(os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY") or "").strip(),
         action_queue_table=os.getenv("ACTION_QUEUE_TABLE", "action_queue").strip(),
         toy_armed=_bool_env("TOY_ARMED", False),
+        toy_main_address=os.getenv("TOY_MAIN_ADDRESS", "33:74:7E:ED:80:D9").strip(),
+        toy_vibrator_address=os.getenv("TOY_VIBRATOR_ADDRESS", "3D:B2:B4:ED:41:68").strip(),
     )

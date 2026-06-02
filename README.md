@@ -154,6 +154,8 @@ Local usage:
    `stop_toy_bridge.bat`; it clears the pid file safely.
 4. Set `TOY_ARMED=true` in the local `.env` only when you intentionally want
    the bridge to execute non-stop toy commands.
+5. Override `TOY_MAIN_ADDRESS` or `TOY_VIBRATOR_ADDRESS` in `.env` if the
+   paired devices are replaced or their BLE addresses change.
 
 Safety notes:
 

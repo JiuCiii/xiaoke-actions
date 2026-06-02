@@ -56,20 +56,16 @@ def _clean_seconds(seconds: float) -> float:
     return min(seconds, MAX_SECONDS)
 
 
-def _address_for(device: DeviceName) -> str:
-    if device == "main":
-        return MAIN_ADDRESS
-    if device == "vibrator":
-        return VIBRATOR_ADDRESS
-    raise ToyError("unknown_device")
-
-
 class ToyController:
+    def __init__(self, main_address: str = MAIN_ADDRESS, vibrator_address: str = VIBRATOR_ADDRESS):
+        self.main_address = main_address
+        self.vibrator_address = vibrator_address
+
     async def main(self, mode: int, seconds: float) -> ToyActionResult:
         if not 1 <= mode <= 10:
             raise ToyError("main_mode_must_be_1_10")
         duration = _clean_seconds(seconds)
-        address = _address_for("main")
+        address = self._address_for("main")
         await self._run_for(address, _main_command(mode), duration)
         return ToyActionResult(
             ok=True,
@@ -85,7 +81,7 @@ class ToyController:
         if not 1 <= level <= 6:
             raise ToyError("vibe_level_must_be_1_6")
         duration = _clean_seconds(seconds)
-        address = _address_for("vibrator")
+        address = self._address_for("vibrator")
         await self._run_for(address, _vibe_command(level), duration)
         return ToyActionResult(
             ok=True,
@@ -100,7 +96,7 @@ class ToyController:
     async def start_main(self, mode: int) -> ToyActionResult:
         if not 1 <= mode <= 10:
             raise ToyError("main_mode_must_be_1_10")
-        address = _address_for("main")
+        address = self._address_for("main")
         await self._write_once(address, _main_command(mode))
         return ToyActionResult(
             ok=True,
@@ -114,7 +110,7 @@ class ToyController:
     async def start_vibe(self, level: int) -> ToyActionResult:
         if not 1 <= level <= 6:
             raise ToyError("vibe_level_must_be_1_6")
-        address = _address_for("vibrator")
+        address = self._address_for("vibrator")
         await self._write_once(address, _vibe_command(level))
         return ToyActionResult(
             ok=True,
@@ -126,7 +122,7 @@ class ToyController:
         )
 
     async def stop_device(self, device: DeviceName) -> ToyActionResult:
-        address = _address_for(device)
+        address = self._address_for(device)
         await self._stop(address)
         return ToyActionResult(
             ok=True,
@@ -147,7 +143,7 @@ class ToyController:
 
         results: list[ToyActionResult] = []
         for current in devices:
-            address = _address_for(current)
+            address = self._address_for(current)
             try:
                 await self._stop(address)
             except Exception as exc:
@@ -176,12 +172,12 @@ class ToyController:
         return {
             "devices": {
                 "main": {
-                    "address": MAIN_ADDRESS,
+                    "address": self.main_address,
                     "modes": "1-10",
                     "note": "Circle-button frequency in the current manual function group.",
                 },
                 "vibrator": {
-                    "address": VIBRATOR_ADDRESS,
+                    "address": self.vibrator_address,
                     "levels": "1-6",
                     "note": "Separate SX176A-02 vibrator.",
                 },
@@ -189,6 +185,13 @@ class ToyController:
             "max_seconds": MAX_SECONDS,
             "requires_duration": True,
         }
+
+    def _address_for(self, device: DeviceName) -> str:
+        if device == "main":
+            return self.main_address
+        if device == "vibrator":
+            return self.vibrator_address
+        raise ToyError("unknown_device")
 
     async def _run_for(self, address: str, command: bytes, seconds: float) -> None:
         async def operation() -> None:
