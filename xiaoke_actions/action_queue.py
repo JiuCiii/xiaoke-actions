@@ -167,6 +167,33 @@ class SupabaseActionQueue:
             priority=int(row.get("priority") or 0),
         )
 
+    def status_counts(self, *, domain: str) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for status in ("pending", "running", "done", "error"):
+            rows = self._request(
+                "GET",
+                "",
+                query={
+                    "domain": f"eq.{domain}",
+                    "status": f"eq.{status}",
+                    "select": "id",
+                },
+            )
+            counts[status] = len(rows or [])
+        return counts
+
+    def recent(self, *, domain: str, limit: int = 5) -> list[dict[str, Any]]:
+        rows = self._request(
+            "GET",
+            "",
+            query={
+                "domain": f"eq.{domain}",
+                "order": "created_at.desc",
+                "limit": str(max(1, min(limit, 20))),
+            },
+        )
+        return rows or []
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()

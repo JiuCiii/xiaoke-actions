@@ -146,6 +146,17 @@ Current chain:
 - The bridge claims one pending command, sends the BLE command through
   `bleak`, and marks the record `done` or `error`.
 
+Claude connection:
+
+- This repository only hosts the MCP server. Claude will not see these tools
+  until its MCP client configuration points to the Render `/mcp` URL.
+- After Claude is connected, it can call `toy_status` and `toy_diagnostics` to
+  inspect the queue and configuration, then call `toy_main`, `toy_vibe`,
+  `toy_stop`, or `toy_sequence` when appropriate.
+- The local bridge still controls whether commands physically execute. If the
+  bridge is closed or `TOY_ARMED` is not true, queued start commands will not
+  move the toy.
+
 Local usage:
 
 1. Run `start_toy_bridge.bat` from this folder and keep the visible window open.

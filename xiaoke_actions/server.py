@@ -133,6 +133,42 @@ def toy_status() -> dict:
 
 
 @mcp.tool()
+def toy_diagnostics(limit: int = 5) -> dict:
+    """Return toy bridge configuration and recent queue health without moving the toy."""
+    status = toy_status()
+    diagnostics = {
+        "ok": True,
+        "status": status,
+        "queue_counts": {},
+        "recent": [],
+        "warnings": [],
+    }
+    if not action_queue.is_configured():
+        diagnostics["ok"] = False
+        diagnostics["warnings"].append("action_queue_not_configured")
+        return diagnostics
+
+    try:
+        counts = action_queue.status_counts(domain="toy")
+        recent = action_queue.recent(domain="toy", limit=limit)
+    except ActionQueueError as exc:
+        diagnostics["ok"] = False
+        diagnostics["warnings"].append(str(exc))
+        return diagnostics
+
+    diagnostics["queue_counts"] = counts
+    diagnostics["recent"] = [_toy_record_summary(row) for row in recent]
+    if counts.get("pending", 0) > 0:
+        diagnostics["warnings"].append("toy_commands_pending")
+    if counts.get("running", 0) > 0:
+        diagnostics["warnings"].append("toy_commands_running")
+    if not config.toy_armed:
+        diagnostics["warnings"].append("toy_disarmed")
+    diagnostics["ok"] = not any(warning in {"toy_commands_pending", "toy_commands_running"} for warning in diagnostics["warnings"])
+    return diagnostics
+
+
+@mcp.tool()
 def toy_command(
     action: str,
     seconds: float | None = None,
@@ -258,6 +294,20 @@ def _clean_sequence_step(step: dict) -> dict:
     if action_name == "stop":
         raise ToyError("sequence_steps_cannot_be_stop")
     return {"action": action_name, **payload}
+
+
+def _toy_record_summary(row: dict) -> dict:
+    return {
+        "id": row.get("id"),
+        "action": row.get("action"),
+        "status": row.get("status"),
+        "payload": row.get("payload") or {},
+        "created_at": row.get("created_at"),
+        "claimed_at": row.get("claimed_at"),
+        "finished_at": row.get("finished_at"),
+        "error": row.get("error"),
+        "result": row.get("result"),
+    }
 
 
 def _clean_seconds(seconds: float) -> float:
