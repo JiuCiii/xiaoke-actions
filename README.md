@@ -177,6 +177,47 @@ Safety notes:
 - If the bridge is not open, commands remain queued until the bridge starts.
 - The queue was last checked with no `pending` or `running` toy records.
 
+Claude toy flow:
+
+1. Call `toy_diagnostics(limit=1)` first. Continue only when
+   `bridge.status=online`, `bridge.fresh=true`, `bridge.local_armed=true`, and
+   queue counts show `pending=0` and `running=0`.
+2. Queue exactly one intended toy action. Prefer short, low-intensity tests
+   first, such as `toy_vibe(level=1, seconds=2)` or
+   `toy_main(mode=1, seconds=2)`.
+3. For `toy_sequence`, wait at least 25-30 seconds before checking diagnostics.
+   Sequence execution can make the bridge heartbeat look briefly older while
+   BLE operations are in progress.
+4. Call `toy_diagnostics(limit=2)` after waiting. Report whether the new record
+   is `done`, whether each `started` and `stopped` result is `ok=true`, and
+   whether the queue returned to `pending=0` and `running=0`.
+5. If the only failure is a transient BLE discovery error such as
+   `Device ... was not found`, retry the same low-intensity action once after a
+   fresh healthy diagnostics check.
+6. Treat `remote_mcp_disarmed` as an informational safety note for the hosted
+   MCP server. Physical execution is controlled by the local bridge, so use
+   `bridge.local_armed` as the execution gate for queued non-stop commands.
+
+Copyable Claude prompt:
+
+```text
+Use the xiaoke-actions connector for this toy flow.
+
+1. Call toy_diagnostics with limit=1. Do not move the toy yet.
+2. Continue only if bridge.status is online, bridge.fresh is true,
+   bridge.local_armed is true, and queue_counts pending/running are both 0.
+3. Queue exactly this action: <describe the one action or sequence here>.
+4. Wait 25-30 seconds before checking again.
+5. Call toy_diagnostics with limit=2.
+6. Report in Chinese: whether the new record is done, whether every started
+   and stopped result is ok=true, whether pending/running returned to 0, and
+   whether any warning matters. Treat remote_mcp_disarmed as informational;
+   the execution gate is bridge.local_armed.
+7. If the only failure is a transient BLE discovery error such as
+   "Device ... was not found", do not escalate intensity. Say that one
+   low-intensity retry is reasonable after a fresh healthy diagnostics check.
+```
+
 ## Design Boundaries
 
 - `xiaoke-actions` is only an action outlet. It does not decide whether Claude should send a note.
