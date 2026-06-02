@@ -101,7 +101,7 @@ class SupabaseActionQueue:
         self._patch(record_id, {"status": "running", "claimed_at": _now_iso()})
 
     def mark_done(self, record_id: str, result: dict[str, Any]) -> None:
-        self._patch(record_id, {"status": "done", "finished_at": _now_iso(), "result": result})
+        self._patch(record_id, {"status": "done", "finished_at": _now_iso(), "result": result, "error": None})
 
     def mark_error(self, record_id: str, error: str) -> None:
         self._patch(record_id, {"status": "error", "finished_at": _now_iso(), "error": error})
