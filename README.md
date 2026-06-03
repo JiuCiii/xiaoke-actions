@@ -112,6 +112,9 @@ The MCP endpoint is:
 http://localhost:8000/mcp
 ```
 
+Health endpoints are available at `/` and `/health`. They return a small public
+JSON payload and do not expose secrets or send actions.
+
 ## Render
 
 Create a new Web Service and point it at this folder.

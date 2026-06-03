@@ -5,6 +5,7 @@ import logging
 from datetime import datetime, timezone
 
 from mcp.server.fastmcp import FastMCP
+from starlette.responses import JSONResponse
 
 from .action_queue import ActionQueueError, SupabaseActionQueue
 from .config import load_config
@@ -40,6 +41,16 @@ mcp = FastMCP(
     port=config.port,
     streamable_http_path=config.mcp_path,
 )
+
+
+@mcp.custom_route("/", methods=["GET"], include_in_schema=False)
+async def root_health(_request) -> JSONResponse:
+    return _health_response()
+
+
+@mcp.custom_route("/health", methods=["GET"], include_in_schema=False)
+async def health(_request) -> JSONResponse:
+    return _health_response()
 
 
 @mcp.tool()
@@ -445,6 +456,20 @@ def _preset_to_vibe_level(preset: str | None) -> int | None:
         "strong": 5,
         "max": 6,
     }.get(preset.strip().lower())
+
+
+def _health_response() -> JSONResponse:
+    return JSONResponse(
+        {
+            "ok": True,
+            "service": "xiaoke-actions",
+            "mcp_path": config.mcp_path,
+            "tools": {
+                "send_note": True,
+                "toy": True,
+            },
+        }
+    )
 
 
 def main() -> None:
