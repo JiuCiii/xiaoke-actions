@@ -130,6 +130,26 @@ python -m xiaoke_actions.server
 
 Set `NTFY_TOPIC` or `NTFY_URL` in Render environment variables.
 
+## Deployed Smoke Test
+
+Set the private MCP URL locally, then run:
+
+```powershell
+.\scripts\smoke_mcp.cmd
+```
+
+Required local environment:
+
+```text
+XIAOKE_ACTIONS_MCP_URL=https://xiaoke-actions.onrender.com/mcp-xiaoke-your-private-path
+XIAOKE_ACTIONS_REQUIRED_TOOLS=send_note,toy_safety_status
+```
+
+The script initializes the deployed MCP server and checks that the required
+tools are visible. It redacts the private path in its output. The old public
+`/mcp` path may return 404 by design when Render is configured with a private
+`MCP_PATH`.
+
 ## SVAKOM Toy Bridge
 
 Toy commands are queued by the Render MCP server into the Supabase
