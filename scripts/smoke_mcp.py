@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_REQUIRED_TOOLS = ("send_note", "toy_safety_status")
+DEFAULT_REQUIRED_TOOLS = ("system_status", "send_note", "toy_safety_status")
 
 
 def main() -> int:

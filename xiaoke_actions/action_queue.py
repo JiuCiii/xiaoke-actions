@@ -19,6 +19,7 @@ class ActionQueueError(RuntimeError):
 
 
 TOY_BRIDGE_STATUS_ID = "00000000-0000-4000-8000-000000000001"
+STACKCHAN_STATUS_ID = "00000000-0000-4000-8000-000000000002"
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,9 @@ class QueueRecord:
     payload: dict[str, Any]
     status: str
     priority: int
+    created_at: str | None = None
+    claimed_at: str | None = None
+    expires_at: str | None = None
 
 
 class SupabaseActionQueue:
@@ -106,6 +110,93 @@ class SupabaseActionQueue:
     def mark_error(self, record_id: str, error: str) -> None:
         self._patch(record_id, {"status": "error", "finished_at": _now_iso(), "error": error})
 
+    def enqueue_stackchan(
+        self,
+        *,
+        action: str,
+        payload: dict[str, Any],
+        ttl_seconds: int | None,
+        replace_pending: bool,
+        source: str = "xiaoke-actions",
+    ) -> QueueRecord:
+        rows = self._rpc(
+            "stackchan_enqueue",
+            {
+                "p_action": action,
+                "p_payload": payload,
+                "p_ttl_seconds": ttl_seconds,
+                "p_replace_pending": replace_pending,
+                "p_source": source,
+            },
+        )
+        if not rows:
+            raise ActionQueueError("stackchan_enqueue_failed")
+        return self._record(rows[0])
+
+    def claim_stackchan(self, *, device_id: str) -> QueueRecord | None:
+        rows = self._rpc("stackchan_claim_next", {"p_device_id": device_id})
+        if not rows:
+            return None
+        return self._record(rows[0])
+
+    def finish_stackchan(
+        self,
+        *,
+        record_id: str,
+        ok: bool,
+        result: dict[str, Any] | None = None,
+        error: str | None = None,
+    ) -> dict[str, Any] | None:
+        rows = self._rpc(
+            "stackchan_finish",
+            {
+                "p_id": record_id,
+                "p_ok": ok,
+                "p_result": result or {},
+                "p_error": error,
+            },
+        )
+        return rows[0] if rows else None
+
+    def cancel_stackchan(self, *, record_id: str) -> dict[str, Any] | None:
+        rows = self._rpc("stackchan_cancel", {"p_id": record_id})
+        return rows[0] if rows else None
+
+    def update_stackchan_status(self, *, device_id: str, data: dict[str, Any]) -> dict[str, Any] | None:
+        payload = {
+            **data,
+            "device_id": device_id,
+            "updated_at": _now_iso(),
+        }
+        body = {
+            "id": STACKCHAN_STATUS_ID,
+            "domain": "stackchan_bridge",
+            "action": "heartbeat",
+            "payload": payload,
+            "status": "online",
+            "priority": 0,
+            "source": "stackchan-device",
+            "finished_at": _now_iso(),
+            "result": payload,
+            "error": None,
+        }
+        rows = self._request(
+            "POST",
+            "",
+            body=[body],
+            query={"on_conflict": "id", "select": "*"},
+            prefer="resolution=merge-duplicates,return=representation",
+        )
+        return rows[0] if rows else None
+
+    def stackchan_status(self) -> dict[str, Any] | None:
+        rows = self._request(
+            "GET",
+            "",
+            query={"id": f"eq.{STACKCHAN_STATUS_ID}", "limit": "1"},
+        )
+        return rows[0] if rows else None
+
     def _patch(self, record_id: str, body: dict[str, Any]) -> None:
         self._request("PATCH", "", body=body, query={"id": f"eq.{record_id}"})
 
@@ -117,12 +208,14 @@ class SupabaseActionQueue:
         body: Any | None = None,
         query: dict[str, str] | None = None,
         prefer: str | None = None,
+        base_path: str | None = None,
     ) -> Any:
         if not self.is_configured():
             raise ActionQueueError("supabase_not_configured")
 
         query_string = f"?{urlencode(query)}" if query else ""
-        url = f"{self.config.supabase_url}/rest/v1/{self.config.action_queue_table}{path}{query_string}"
+        resource = base_path or self.config.action_queue_table
+        url = f"{self.config.supabase_url}/rest/v1/{resource}{path}{query_string}"
         headers = {
             "apikey": self.config.supabase_key,
             "Authorization": f"Bearer {self.config.supabase_key}",
@@ -138,6 +231,15 @@ class SupabaseActionQueue:
         if not raw:
             return None
         return json.loads(raw)
+
+    def _rpc(self, function_name: str, body: dict[str, Any]) -> Any:
+        return self._request(
+            "POST",
+            "",
+            body=body,
+            prefer="return=representation",
+            base_path=f"rpc/{function_name}",
+        )
 
     def _urlopen_with_retries(
         self,
@@ -169,11 +271,19 @@ class SupabaseActionQueue:
             payload=row.get("payload") or {},
             status=row["status"],
             priority=int(row.get("priority") or 0),
+            created_at=row.get("created_at"),
+            claimed_at=row.get("claimed_at"),
+            expires_at=row.get("expires_at"),
         )
 
-    def status_counts(self, *, domain: str) -> dict[str, int]:
+    def status_counts(
+        self,
+        *,
+        domain: str,
+        statuses: tuple[str, ...] = ("pending", "running", "done", "error"),
+    ) -> dict[str, int]:
         counts: dict[str, int] = {}
-        for status in ("pending", "running", "done", "error"):
+        for status in statuses:
             rows = self._request(
                 "GET",
                 "",

@@ -2,9 +2,8 @@
 
 `xiaoke-actions` is a small MCP server for actions Xiaoke can take toward the outside world.
 
-Version 1 intentionally exposes only one tool:
-
-- `send_note(message, title?, urgency?, category?, intent?)` sends a note to Xiaomao's phone through ntfy.
+It currently exposes notification tools, queued SVAKOM toy controls, and a
+lightweight Runtime Guard status tool.
 
 The server does not decide when Xiaoke should send a note. It only delivers the action with guardrails: length limits, rate limiting, duplicate suppression, quiet hours, and structured logs.
 
@@ -113,7 +112,22 @@ http://localhost:8000/mcp
 ```
 
 Health endpoints are available at `/` and `/health`. They return a small public
-JSON payload and do not expose secrets or send actions.
+process-liveness payload and do not expose secrets, private MCP paths, capability
+status, or send actions.
+
+## Runtime Guard
+
+`system_status()` reports lightweight runtime status for the top-level
+capabilities `send_note`, `toy_control`, and `toy_stop`.
+
+- `enabled`: recent evidence confirms the capability is available.
+- `degraded`: it remains partly usable but has a known limitation or recent failure.
+- `disabled`: required configuration is missing or the capability is intentionally off.
+- `unknown`: availability cannot currently be confirmed.
+
+The status tool does not make synchronous network probes. It combines local
+configuration facts with observations recorded by real action and diagnostics
+calls. It never returns secrets, private MCP paths, or device addresses.
 
 ## Render
 
@@ -145,7 +159,7 @@ Required local environment:
 
 ```text
 XIAOKE_ACTIONS_MCP_URL=https://xiaoke-actions.onrender.com/mcp-xiaoke-your-private-path
-XIAOKE_ACTIONS_REQUIRED_TOOLS=send_note,toy_safety_status
+XIAOKE_ACTIONS_REQUIRED_TOOLS=system_status,send_note,toy_safety_status
 ```
 
 The script initializes the deployed MCP server and checks that the required
@@ -248,6 +262,43 @@ Use the xiaoke-actions connector for this toy flow.
    "Device ... was not found", do not escalate intensity. Say that one
    low-intensity retry is reasonable after a fresh healthy diagnostics check.
 ```
+
+## Stack-chan
+
+Stack-chan is another physical action outlet in this service. It shares the
+Supabase Action Queue but uses `domain = stackchan` and its own command
+semantics:
+
+- `stackchan_speak(text)`: FIFO, 30-second TTL by default, never implicitly
+  supersedes another sentence.
+- `stackchan_emote(expression)`: latest pending expression wins.
+- `stackchan_move_head(pitch, yaw)`: latest pending pose wins.
+- `stackchan_wiggle()`: one-shot action with a 10-second TTL; duplicate pending
+  wiggles collapse to the newest one.
+- `stackchan_cancel(command_id)`: explicitly cancels an unclaimed command.
+- `stackchan_status()`: returns heartbeat freshness, queue counts, and recent
+  results.
+
+Device endpoints:
+
+```text
+GET  /stackchan/poll
+POST /stackchan/result
+POST /stackchan/heartbeat
+```
+
+The device authenticates with `Authorization: Bearer <STACKCHAN_DEVICE_TOKEN>`
+or `X-Stackchan-Token`. It never receives the Supabase service-role key.
+
+Before deployment:
+
+1. Apply `schema/stackchan_queue.sql` to the existing Supabase project.
+2. Set a long random `STACKCHAN_DEVICE_TOKEN` in Render and on the device.
+3. Deploy the service and run the MCP smoke test.
+4. Run `scripts/stackchan_simulator.py` before connecting physical hardware.
+
+The migration is intentionally separate from `schema/action_queue.sql` so it
+can be reviewed and applied after the current wake stability test.
 
 ## Design Boundaries
 

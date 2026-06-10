@@ -24,3 +24,9 @@ services:
         value: suppress
       - key: TIMEZONE
         value: Asia/Shanghai
+      - key: STACKCHAN_DEVICE_TOKEN
+        sync: false
+      - key: STACKCHAN_SPEAK_TTL_SECONDS
+        value: "30"
+      - key: STACKCHAN_WIGGLE_TTL_SECONDS
+        value: "10"

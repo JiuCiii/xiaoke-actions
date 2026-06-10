@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import hmac
 from datetime import datetime, timezone
 
 from mcp.server.fastmcp import FastMCP
@@ -11,6 +12,16 @@ from .action_queue import ActionQueueError, SupabaseActionQueue
 from .config import load_config
 from .guardrails import ActionGuardrails
 from .ntfy import NtfyError, send_ntfy
+from .runtime import RuntimeGuard
+from .runtime.guards import safely_record
+from .stackchan import (
+    StackchanCommand,
+    StackchanError,
+    emote_command,
+    move_head_command,
+    speak_command,
+    wiggle_command,
+)
 from .toy import ToyController, ToyError
 
 
@@ -27,6 +38,7 @@ toy_controller = ToyController(
     vibrator_address=config.toy_vibrator_address,
 )
 action_queue = SupabaseActionQueue(config)
+runtime_guard = RuntimeGuard(config)
 
 mcp = FastMCP(
     "xiaoke-actions",
@@ -51,6 +63,188 @@ async def root_health(_request) -> JSONResponse:
 @mcp.custom_route("/health", methods=["GET"], include_in_schema=False)
 async def health(_request) -> JSONResponse:
     return _health_response()
+
+
+@mcp.custom_route("/stackchan/poll", methods=["GET"], include_in_schema=False)
+async def stackchan_poll(request) -> JSONResponse:
+    denied = _stackchan_auth_error(request)
+    if denied:
+        return denied
+    device_id = (request.headers.get("x-stackchan-device") or "stackchan-01").strip()[:80]
+    try:
+        record = action_queue.claim_stackchan(device_id=device_id)
+    except ActionQueueError as exc:
+        logger.exception("stackchan_poll_failed device=%s", device_id)
+        return JSONResponse({"ok": False, "reason": str(exc)}, status_code=503)
+    if not record:
+        return JSONResponse({"ok": True, "command": None})
+    return JSONResponse(
+        {
+            "ok": True,
+            "command": {
+                "id": record.id,
+                "action": record.action,
+                "payload": record.payload,
+                "created_at": record.created_at,
+                "claimed_at": record.claimed_at,
+                "expires_at": record.expires_at,
+            },
+        }
+    )
+
+
+@mcp.custom_route("/stackchan/result", methods=["POST"], include_in_schema=False)
+async def stackchan_result(request) -> JSONResponse:
+    denied = _stackchan_auth_error(request)
+    if denied:
+        return denied
+    body, error = await _request_json(request)
+    if error:
+        return error
+    record_id = str(body.get("id") or "").strip()
+    if not record_id:
+        return JSONResponse({"ok": False, "reason": "id_required"}, status_code=400)
+    ok = body.get("ok")
+    if not isinstance(ok, bool):
+        return JSONResponse({"ok": False, "reason": "ok_must_be_boolean"}, status_code=400)
+    try:
+        row = action_queue.finish_stackchan(
+            record_id=record_id,
+            ok=ok,
+            result=body.get("result") if isinstance(body.get("result"), dict) else {},
+            error=str(body.get("error") or "")[:500] or None,
+        )
+    except ActionQueueError as exc:
+        logger.exception("stackchan_result_failed id=%s", record_id)
+        return JSONResponse({"ok": False, "reason": str(exc)}, status_code=503)
+    if not row:
+        return JSONResponse({"ok": False, "reason": "command_not_running"}, status_code=409)
+    return JSONResponse({"ok": True, "id": record_id, "status": row.get("status")})
+
+
+@mcp.custom_route("/stackchan/heartbeat", methods=["POST"], include_in_schema=False)
+async def stackchan_heartbeat(request) -> JSONResponse:
+    denied = _stackchan_auth_error(request)
+    if denied:
+        return denied
+    body, error = await _request_json(request)
+    if error:
+        return error
+    device_id = str(body.get("device_id") or request.headers.get("x-stackchan-device") or "stackchan-01")
+    device_id = device_id.strip()[:80]
+    status = {
+        "firmware_version": str(body.get("firmware_version") or "")[:80] or None,
+        "ip": str(body.get("ip") or "")[:80] or None,
+        "rssi": body.get("rssi"),
+        "current_action": str(body.get("current_action") or "")[:40] or None,
+        "free_heap": body.get("free_heap"),
+    }
+    try:
+        row = action_queue.update_stackchan_status(device_id=device_id, data=status)
+    except ActionQueueError as exc:
+        logger.exception("stackchan_heartbeat_failed device=%s", device_id)
+        return JSONResponse({"ok": False, "reason": str(exc)}, status_code=503)
+    if row:
+        safely_record(
+            lambda: runtime_guard.record_success(
+                "stackchan_device",
+                reason_code="stackchan_heartbeat_fresh",
+                summary="A fresh Stack-chan device heartbeat was received.",
+                source="stackchan_heartbeat",
+                details={"device_id": device_id},
+            )
+        )
+    return JSONResponse({"ok": bool(row), "device_id": device_id})
+
+
+@mcp.tool()
+def system_status() -> dict:
+    """Return lightweight runtime status for each xiaoke-actions capability."""
+    return runtime_guard.system_status()
+
+
+@mcp.tool()
+def stackchan_speak(text: str) -> dict:
+    """Queue one short sentence for Stack-chan to speak in FIFO order.
+
+    Unclaimed speech expires after a short TTL so an offline device does not
+    unexpectedly speak stale lines when it reconnects.
+    """
+    try:
+        command = speak_command(text, ttl_seconds=config.stackchan_speak_ttl_seconds)
+        return _queue_stackchan(command)
+    except StackchanError as exc:
+        return {"ok": False, "action": "speak", "reason": str(exc)}
+
+
+@mcp.tool()
+def stackchan_emote(expression: str) -> dict:
+    """Set Stack-chan's current expression; pending older expressions are superseded."""
+    try:
+        return _queue_stackchan(emote_command(expression))
+    except StackchanError as exc:
+        return {"ok": False, "action": "emote", "reason": str(exc)}
+
+
+@mcp.tool()
+def stackchan_move_head(pitch: float, yaw: float) -> dict:
+    """Set Stack-chan's head pose; pending older head poses are superseded."""
+    try:
+        return _queue_stackchan(move_head_command(pitch, yaw))
+    except StackchanError as exc:
+        return {"ok": False, "action": "move_head", "reason": str(exc)}
+
+
+@mcp.tool()
+def stackchan_wiggle() -> dict:
+    """Queue one short wiggle; duplicate pending wiggles collapse to the newest one."""
+    return _queue_stackchan(wiggle_command(ttl_seconds=config.stackchan_wiggle_ttl_seconds))
+
+
+@mcp.tool()
+def stackchan_cancel(command_id: str) -> dict:
+    """Cancel one Stack-chan command only if the device has not claimed it yet."""
+    try:
+        row = action_queue.cancel_stackchan(record_id=(command_id or "").strip())
+    except ActionQueueError as exc:
+        return {"ok": False, "reason": str(exc), "id": command_id}
+    if not row:
+        return {"ok": False, "reason": "command_not_pending", "id": command_id}
+    return {"ok": True, "cancelled": True, "id": command_id}
+
+
+@mcp.tool()
+def stackchan_status(limit: int = 5) -> dict:
+    """Return Stack-chan heartbeat, queue counts, and recent command results."""
+    if not action_queue.is_configured():
+        return {"ok": False, "reason": "action_queue_not_configured"}
+    try:
+        heartbeat = action_queue.stackchan_status()
+        counts = action_queue.status_counts(
+            domain="stackchan",
+            statuses=("pending", "running", "done", "error", "expired", "superseded", "cancelled"),
+        )
+        recent = action_queue.recent(domain="stackchan", limit=limit)
+    except ActionQueueError as exc:
+        return {"ok": False, "reason": str(exc)}
+    summary = _stackchan_heartbeat_summary(heartbeat)
+    if summary and summary.get("fresh"):
+        safely_record(
+            lambda: runtime_guard.record_success(
+                "stackchan_device",
+                reason_code="stackchan_heartbeat_fresh",
+                summary="Stack-chan was recently observed online.",
+                source="stackchan_status",
+                details={"device_id": summary.get("device_id")},
+            )
+        )
+    return {
+        "ok": bool(summary and summary.get("fresh")),
+        "device": summary,
+        "queue_counts": counts,
+        "recent": [_stackchan_record_summary(row) for row in recent],
+        "device_endpoint_configured": bool(config.stackchan_device_token),
+    }
 
 
 @mcp.tool()
@@ -89,6 +283,17 @@ def send_note(
     }
 
     if not decision.allowed:
+        if decision.reason == "ntfy_not_configured":
+            safely_record(
+                lambda: runtime_guard.record_failure(
+                    "send_note",
+                    reason_code="ntfy_not_configured",
+                    summary="send_note is disabled because ntfy is not configured.",
+                    source="send_note",
+                    next_step="configure_ntfy",
+                    status="disabled",
+                )
+            )
         logger.info("action_blocked %s", json.dumps(audit, ensure_ascii=False))
         return {
             "ok": False,
@@ -107,6 +312,15 @@ def send_note(
             priority=decision.priority,
         )
     except NtfyError as exc:
+        safely_record(
+            lambda: runtime_guard.record_failure(
+                "send_note",
+                reason_code="ntfy_delivery_failed",
+                summary="The most recent send_note delivery attempt failed.",
+                source="send_note",
+                next_step="check_ntfy_configuration_and_service",
+            )
+        )
         logger.exception("action_failed %s", json.dumps(audit, ensure_ascii=False))
         return {
             "ok": False,
@@ -119,6 +333,14 @@ def send_note(
         }
 
     audit["ntfy_status"] = response["status"]
+    safely_record(
+        lambda: runtime_guard.record_success(
+            "send_note",
+            reason_code="ntfy_delivery_succeeded",
+            summary="The most recent send_note delivery attempt succeeded.",
+            source="send_note",
+        )
+    )
     logger.info("action_delivered %s", json.dumps(audit, ensure_ascii=False))
     return {
         "ok": True,
@@ -160,6 +382,7 @@ def toy_diagnostics(limit: int = 5) -> dict:
     if not action_queue.is_configured():
         diagnostics["ok"] = False
         diagnostics["warnings"].append("action_queue_not_configured")
+        safely_record(lambda: runtime_guard.record_toy_diagnostics(diagnostics))
         return diagnostics
 
     try:
@@ -169,6 +392,7 @@ def toy_diagnostics(limit: int = 5) -> dict:
     except ActionQueueError as exc:
         diagnostics["ok"] = False
         diagnostics["warnings"].append(str(exc))
+        safely_record(lambda: runtime_guard.record_toy_diagnostics(diagnostics))
         return diagnostics
 
     diagnostics["bridge"] = _bridge_status_summary(bridge)
@@ -201,6 +425,7 @@ def toy_diagnostics(limit: int = 5) -> dict:
         }
         for warning in diagnostics["warnings"]
     )
+    safely_record(lambda: runtime_guard.record_toy_diagnostics(diagnostics))
     return diagnostics
 
 
@@ -269,8 +494,27 @@ def toy_command(
             priority=priority,
             source="xiaoke-actions",
         )
-    except (ToyError, ActionQueueError) as exc:
+    except ToyError as exc:
         return {"ok": False, "action": action, "reason": str(exc)}
+    except ActionQueueError as exc:
+        safely_record(
+            lambda: runtime_guard.record_failure(
+                "action_queue",
+                reason_code="action_queue_enqueue_failed",
+                summary="The most recent Action Queue enqueue attempt failed.",
+                source="toy_command",
+                next_step="check_supabase_queue",
+            )
+        )
+        return {"ok": False, "action": action, "reason": str(exc)}
+    safely_record(
+        lambda: runtime_guard.record_success(
+            "action_queue",
+            reason_code="action_queue_enqueue_succeeded",
+            summary="The most recent Action Queue enqueue attempt succeeded.",
+            source="toy_command",
+        )
+    )
     logger.info("toy_queued %s", json.dumps(record.__dict__, ensure_ascii=False))
     return {"ok": True, "queued": True, "id": record.id, "action": record.action, "payload": record.payload}
 
@@ -305,8 +549,27 @@ def toy_sequence(steps: list[dict], intent: str | None = None) -> dict:
             priority=0,
             source="xiaoke-actions",
         )
-    except (ToyError, ActionQueueError) as exc:
+    except ToyError as exc:
         return {"ok": False, "action": "sequence", "reason": str(exc)}
+    except ActionQueueError as exc:
+        safely_record(
+            lambda: runtime_guard.record_failure(
+                "action_queue",
+                reason_code="action_queue_enqueue_failed",
+                summary="The most recent Action Queue enqueue attempt failed.",
+                source="toy_sequence",
+                next_step="check_supabase_queue",
+            )
+        )
+        return {"ok": False, "action": "sequence", "reason": str(exc)}
+    safely_record(
+        lambda: runtime_guard.record_success(
+            "action_queue",
+            reason_code="action_queue_enqueue_succeeded",
+            summary="The most recent Action Queue enqueue attempt succeeded.",
+            source="toy_sequence",
+        )
+    )
     logger.info("toy_sequence_queued %s", json.dumps(record.__dict__, ensure_ascii=False))
     return {"ok": True, "queued": True, "id": record.id, "action": "sequence", "payload": record.payload}
 
@@ -376,6 +639,108 @@ def _toy_record_summary(row: dict) -> dict:
         "error": row.get("error"),
         "result": row.get("result"),
     }
+
+
+def _queue_stackchan(command: StackchanCommand) -> dict:
+    try:
+        record = action_queue.enqueue_stackchan(
+            action=command.action,
+            payload=command.payload,
+            ttl_seconds=command.ttl_seconds,
+            replace_pending=command.replace_pending,
+        )
+    except ActionQueueError as exc:
+        safely_record(
+            lambda: runtime_guard.record_failure(
+                "stackchan_queue",
+                reason_code="stackchan_enqueue_failed",
+                summary="The most recent Stack-chan enqueue attempt failed.",
+                source=f"stackchan_{command.action}",
+                next_step="check_supabase_queue",
+            )
+        )
+        return {"ok": False, "action": command.action, "reason": str(exc)}
+    safely_record(
+        lambda: runtime_guard.record_success(
+            "stackchan_queue",
+            reason_code="stackchan_enqueue_succeeded",
+            summary="The most recent Stack-chan command was queued.",
+            source=f"stackchan_{command.action}",
+        )
+    )
+    logger.info("stackchan_queued %s", json.dumps(record.__dict__, ensure_ascii=False))
+    return {
+        "ok": True,
+        "queued": True,
+        "id": record.id,
+        "action": record.action,
+        "payload": record.payload,
+        "expires_at": record.expires_at,
+        "queue_policy": {
+            "replace_pending": command.replace_pending,
+            "ttl_seconds": command.ttl_seconds,
+        },
+    }
+
+
+def _stackchan_record_summary(row: dict) -> dict:
+    return {
+        "id": row.get("id"),
+        "action": row.get("action"),
+        "status": row.get("status"),
+        "payload": row.get("payload") or {},
+        "created_at": row.get("created_at"),
+        "claimed_at": row.get("claimed_at"),
+        "claimed_by": row.get("claimed_by"),
+        "expires_at": row.get("expires_at"),
+        "finished_at": row.get("finished_at"),
+        "superseded_at": row.get("superseded_at"),
+        "superseded_by": row.get("superseded_by"),
+        "error": row.get("error"),
+        "result": row.get("result"),
+    }
+
+
+def _stackchan_heartbeat_summary(row: dict | None) -> dict | None:
+    if not row:
+        return None
+    payload = row.get("payload") or {}
+    updated_at = payload.get("updated_at") or row.get("finished_at")
+    age_seconds = _age_seconds(updated_at)
+    return {
+        "status": row.get("status"),
+        "device_id": payload.get("device_id"),
+        "firmware_version": payload.get("firmware_version"),
+        "rssi": payload.get("rssi"),
+        "current_action": payload.get("current_action"),
+        "free_heap": payload.get("free_heap"),
+        "updated_at": updated_at,
+        "age_seconds": age_seconds,
+        "fresh": row.get("status") == "online" and age_seconds is not None and age_seconds <= 90,
+    }
+
+
+def _stackchan_auth_error(request) -> JSONResponse | None:
+    expected = config.stackchan_device_token
+    if not expected:
+        return JSONResponse({"ok": False, "reason": "stackchan_device_not_configured"}, status_code=503)
+    authorization = request.headers.get("authorization") or ""
+    supplied = authorization[7:].strip() if authorization.lower().startswith("bearer ") else ""
+    if not supplied:
+        supplied = (request.headers.get("x-stackchan-token") or "").strip()
+    if not supplied or not hmac.compare_digest(supplied, expected):
+        return JSONResponse({"ok": False, "reason": "unauthorized"}, status_code=401)
+    return None
+
+
+async def _request_json(request) -> tuple[dict, JSONResponse | None]:
+    try:
+        body = await request.json()
+    except (ValueError, json.JSONDecodeError):
+        return {}, JSONResponse({"ok": False, "reason": "invalid_json"}, status_code=400)
+    if not isinstance(body, dict):
+        return {}, JSONResponse({"ok": False, "reason": "json_object_required"}, status_code=400)
+    return body, None
 
 
 def _bridge_status_summary(row: dict | None) -> dict | None:
@@ -463,11 +828,6 @@ def _health_response() -> JSONResponse:
         {
             "ok": True,
             "service": "xiaoke-actions",
-            "mcp_path": config.mcp_path,
-            "tools": {
-                "send_note": True,
-                "toy": True,
-            },
         }
     )
 
