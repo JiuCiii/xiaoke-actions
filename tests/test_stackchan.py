@@ -8,13 +8,7 @@ from unittest.mock import patch
 
 from xiaoke_actions import server
 from xiaoke_actions.action_queue import QueueRecord
-from xiaoke_actions.stackchan import (
-    StackchanError,
-    emote_command,
-    move_head_command,
-    speak_command,
-    wiggle_command,
-)
+from xiaoke_actions.stackchan import StackchanError, move_head_command, speak_command, wiggle_command
 
 
 class FakeRequest:
@@ -74,7 +68,6 @@ class StackchanCommandTests(unittest.TestCase):
         self.assertFalse(command.replace_pending)
 
     def test_state_commands_replace_pending(self) -> None:
-        self.assertTrue(emote_command("happy").replace_pending)
         self.assertTrue(move_head_command(10, -20).replace_pending)
 
     def test_wiggle_is_short_lived_and_deduplicated(self) -> None:
@@ -82,26 +75,24 @@ class StackchanCommandTests(unittest.TestCase):
         self.assertEqual(command.ttl_seconds, 10)
         self.assertTrue(command.replace_pending)
 
-    def test_invalid_expression_and_head_range_are_rejected(self) -> None:
-        with self.assertRaises(StackchanError):
-            emote_command("confused-but-purple")
+    def test_invalid_head_range_is_rejected(self) -> None:
         with self.assertRaises(StackchanError):
             move_head_command(90, 0)
 
 
 class StackchanServerTests(unittest.TestCase):
-    def test_tools_preserve_fifo_speech_and_replace_state(self) -> None:
+    def test_tools_preserve_fifo_speech_and_replace_head_state(self) -> None:
         queue = FakeStackchanQueue()
         with patch.object(server, "action_queue", queue):
             first = server.stackchan_speak("第一句")
             second = server.stackchan_speak("第二句")
-            server.stackchan_emote("happy")
-            server.stackchan_emote("angry")
+            server.stackchan_move_head(10, 20)
+            server.stackchan_move_head(-10, -20)
 
         self.assertTrue(first["ok"])
         self.assertTrue(second["ok"])
-        self.assertEqual([record.action for record in queue.pending], ["speak", "speak", "emote"])
-        self.assertEqual(queue.pending[-1].payload["expression"], "angry")
+        self.assertEqual([record.action for record in queue.pending], ["speak", "speak", "move_head"])
+        self.assertEqual(queue.pending[-1].payload, {"pitch": -10.0, "yaw": -20.0})
 
     def test_device_poll_and_result_complete_a_command(self) -> None:
         queue = FakeStackchanQueue()

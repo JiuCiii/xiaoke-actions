@@ -17,7 +17,6 @@ from .runtime.guards import safely_record
 from .stackchan import (
     StackchanCommand,
     StackchanError,
-    emote_command,
     move_head_command,
     speak_command,
     wiggle_command,
@@ -175,15 +174,6 @@ def stackchan_speak(text: str) -> dict:
         return _queue_stackchan(command)
     except StackchanError as exc:
         return {"ok": False, "action": "speak", "reason": str(exc)}
-
-
-@mcp.tool()
-def stackchan_emote(expression: str) -> dict:
-    """Set Stack-chan's current expression; pending older expressions are superseded."""
-    try:
-        return _queue_stackchan(emote_command(expression))
-    except StackchanError as exc:
-        return {"ok": False, "action": "emote", "reason": str(exc)}
 
 
 @mcp.tool()
@@ -828,6 +818,8 @@ def _health_response() -> JSONResponse:
         {
             "ok": True,
             "service": "xiaoke-actions",
+            "version": "2026-06-12-chat-mcp",
+            "mcp_path": config.mcp_path,
         }
     )
 
