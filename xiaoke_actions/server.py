@@ -819,7 +819,7 @@ def _health_response() -> JSONResponse:
             "ok": True,
             "service": "xiaoke-actions",
             "version": "2026-06-12-chat-mcp",
-            "mcp_path": config.mcp_path,
+            "mcp_configured": bool(config.mcp_path),
         }
     )
 
